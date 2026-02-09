@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import pandas as pd
 import numpy as np
@@ -112,7 +113,7 @@ async def analyze_plant_data(data: SensorData):
             feature_needed = ml_model['feature_cols']
             df_features = df_input[feature_needed]
         except KeyError as e:
-            return {"status":"error", "message": f"Missing sensor data: str{e}"}
+            return JSONResponse(content={"status":"error", "message": f"Missing sensor data: str{e}"})
         
         X_scaled = ml_model["scaler"].transform(df_features)
         X_scaled_df = pd.DataFrame(X_scaled, columns=feature_needed)
@@ -127,7 +128,7 @@ async def analyze_plant_data(data: SensorData):
         
         #Check Threshold
         if eff_loss < 1.5:
-            return {"status":"Healthy","message": f"Efficieny Gap is minimal ({eff_loss:.2f}%)"}
+            return JSONResponse(content={"status":"Healthy","message": f"Efficieny Gap is minimal ({eff_loss:.2f}%)"}, status_code=201)
         
         reconstruced = ml_model['localizer'].predict(X_scaled_df)
         error = np.power(X_scaled_df-reconstruced, 2).values[0]
