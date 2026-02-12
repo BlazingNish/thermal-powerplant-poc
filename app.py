@@ -126,9 +126,19 @@ async def analyze_plant_data(data: SensorData):
         #Calculating the gap
         eff_loss = float(expected_eff - actual_eff)
         
-        #Check Threshold
-        if eff_loss < 1.5:
-            return JSONResponse(content={"status":"Healthy","message": f"Efficieny Gap is minimal ({eff_loss:.2f}%)"}, status_code=201)
+        # Define Zones
+        NOISE_ZONE = 0.5   # Below this is just sensor noise
+        WARNING_ZONE = 1.0 # Worth noting, but not critical
+        CRITICAL_ZONE = 2.0 # Something is definitely broken
+
+        if eff_loss < NOISE_ZONE:
+            return {"status": "Healthy", "message": "Normal Operation"}
+        
+        # If it's in the "Warning Zone" (0.5% - 1.0%), we return it but mark it as LOW PRIORITY
+        if eff_loss < WARNING_ZONE:
+            priority = "LOW (Monitoring Required)"
+        else:
+            priority = "HIGH (Action Required)"
         
         reconstruced = ml_model['localizer'].predict(X_scaled_df)
         error = np.power(X_scaled_df-reconstruced, 2).values[0]
@@ -199,7 +209,8 @@ async def analyze_plant_data(data: SensorData):
             
             "anomaly_metadata": {
                 "anomaly_score": round(float(top_suspects['Error_Score'].max()), 2),
-                "spc_status": spc_status_msg
+                "spc_status": spc_status_msg,
+                "severity": priority
             }
         }
         print("Generated Payload:")
