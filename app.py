@@ -195,6 +195,8 @@ async def analyze_plant_data(data: SensorData):
             "timestamp": str(input_dict['timestamp']),
                     
             "impact_metrics": {
+                "expected_efficiency_pct": round(float(expected_eff), 2),
+                "actual_efficiency_pct": round(float(actual_eff), 2),
                 "efficiency_loss_pct": round(float(eff_loss), 2),
                 "gen_mw": round(float(input_dict['gen_mw']), 2)
             },
