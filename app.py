@@ -132,7 +132,7 @@ async def analyze_plant_data(data: SensorData):
         CRITICAL_ZONE = 2.0 # Something is definitely broken
 
         if eff_loss < NOISE_ZONE:
-            return JSONResponse(content={"status": "Healthy", "message": "Normal Operation"}, status_code=201)
+            return JSONResponse(content={"status": "Healthy", "message": "Normal Operation", "expected_efficiency_pct": round(float(expected_eff), 2), "actual_efficiency_pct": round(float(actual_eff), 2)}, status_code=201)
         
         # If it's in the "Warning Zone" (0.5% - 1.0%), we return it but mark it as LOW PRIORITY
         if eff_loss < WARNING_ZONE:
