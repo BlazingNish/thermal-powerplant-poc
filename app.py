@@ -61,10 +61,10 @@ ml_model = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    ml_model['watchdog'] = joblib.load('watchdog_model.pkl')
-    ml_model['localizer'] = joblib.load('localizer_model.pkl')
-    ml_model['scaler'] = joblib.load('scaler.pkl')
-    ml_model['sigma'] = joblib.load('sigma_stats.pkl')
+    ml_model['watchdog'] = joblib.load('watchdog_model_new.pkl')
+    ml_model['localizer'] = joblib.load('localizer_model_new.pkl')
+    ml_model['scaler'] = joblib.load('scaler_new.pkl')
+    ml_model['sigma'] = joblib.load('sigma_stats_new.pkl')
     ml_model['feature_cols'] = ml_model['scaler'].feature_names_in_
     print("--------------ML Models and Artifacts Loaded Successfully--------------")
     yield
