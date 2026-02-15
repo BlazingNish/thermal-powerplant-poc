@@ -118,66 +118,84 @@ async def analyze_plant_data(data: SensorData):
         X_scaled = ml_model["scaler"].transform(df_features)
         X_scaled_df = pd.DataFrame(X_scaled, columns=feature_needed)
         
+        # --- 1. GET DATA ---
+        
         #Watchdog Layer
         watchdog_input = X_scaled_df[['load_pct', 'cw_inlet_temp_c', 'frequency_hz']]
-        expected_eff = ml_model['watchdog'].predict(watchdog_input)[0]
-        actual_eff = input_dict['plant_efficiency_pct']
-        
+        expected_eff = float(ml_model['watchdog'].predict(watchdog_input)[0])
+        actual_eff = float(input_dict['plant_efficiency_pct'])        
         #Calculating the gap
         eff_loss = float(expected_eff - actual_eff)
         
-        # Define Zones
-        NOISE_ZONE = 0.5   # Below this is just sensor noise
-        WARNING_ZONE = 1.0 # Worth noting, but not critical
-        CRITICAL_ZONE = 2.0 # Something is definitely broken
+        
+        # --- 3. PATH B: PATTERN AUTOENCODER ---
+        # Good for: Feeder Trips, APH Choking (which don't hurt Eff enough in this sim)
+        reconstructed = ml_model['localizer'].predict(X_scaled_df)
+        reconstruction_error = np.power(X_scaled_df - reconstructed, 2).values[0]
+        
+        # Calculate Global Anomaly Score (MSE across all sensors)
+        global_anomaly_score = reconstruction_error.mean()
+        
+        # Thresholds derived from your data generator
+        EFF_THRESHOLD = 0.8  # 4x your noise level (0.2)
+        AE_THRESHOLD = 2.5   # Empirical score for "Physics Violation"
+        
+        anomaly_detected = False
+        priority = "Normal"
+        spc_status_msg = "Healthy"
+        
+        # Case 1: High Efficiency Loss (Vaccum/Tube Leaks)
+        if eff_loss > EFF_THRESHOLD:
+            anomaly_detected = True
+            if eff_loss > 1.5:
+                priority = "CRITICAL"
+                spc_status_msg = "Critical Efficiency Loss (Likely Leak)"
+            else:
+                priority = "HIGH"
+                status_msg = "EFFICIENCY DRIFT DETECTED"
+                
+        # Case 2: Physics Violation (Feeder Trip/APH Choke)
+        elif global_anomaly_score > AE_THRESHOLD:
+            anomaly_detected = True
+            priority = "CRITICAL"
+            spc_status_msg = "Physics Constraint Violation (sensor pattern mismatch)"
 
-        if eff_loss < NOISE_ZONE:
-            return JSONResponse(content={"status": "Healthy", "message": "Normal Operation", "expected_efficiency_pct": round(float(expected_eff), 2), "actual_efficiency_pct": round(float(actual_eff), 2)}, status_code=201)
-        
-        # If it's in the "Warning Zone" (0.5% - 1.0%), we return it but mark it as LOW PRIORITY
-        if eff_loss < WARNING_ZONE:
-            priority = "LOW (Monitoring Required)"
-        else:
-            priority = "HIGH (Action Required)"
-        
-        reconstruced = ml_model['localizer'].predict(X_scaled_df)
-        error = np.power(X_scaled_df-reconstruced, 2).values[0]
+        #Stip if healthy
+        if not anomaly_detected:
+            return JSONResponse(content={
+                "status": "Healthy", 
+                "message": f"System Normal. Eff Gap: {eff_loss:.2f}%, Score: {global_anomaly_score:.2f}"
+            }, status_code=201)
         
         suspects_df = pd.DataFrame({
             'Features': feature_needed,
-            'Error_Score': error,
+            'Error_Score': reconstruction_error,
             'Actual_Value': df_features.values[0],
-            'Expected_Value': ml_model["scaler"].inverse_transform(reconstruced)[0]
+            'Expected_Value': ml_model["scaler"].inverse_transform(reconstructed)[0]
             })
         
         #Filter out efficiency itself and sort the error
+        ignore = ['plant_efficiency_pct', 'boiler_efficiency_pct']
         suspects_df = suspects_df[suspects_df['Features'] != 'plant_efficiency_pct']
-        top_suspects = suspects_df.sort_values(by='Error_Score', ascending=False).head(5)
-        print(top_suspects)
+        top_suspects = suspects_df[~suspects_df['Features'].isin(ignore)].sort_values('Error_Score', ascending=False).head(5)
         
         #Construct JSON Dictionaries
         
         anomalous_params = {}
         normal_ranges = {}
         
-        spc_status_msg = "Contextual Anomaly (Physics Mismatch)"
         
-        print("Calculating Anomalous Parameters and Normal Ranges:")
         for _, row in top_suspects.iterrows():
             sensor = row['Features']
             actual = float(row['Actual_Value'])
             expected = float(row['Expected_Value'])
-            
-            anomalous_params[sensor] = round(actual, 2)
-            
-            # RETRIEVE THE SIGMA FOR THIS SPECIFIC SENSOR
-            # We handle cases where the sensor might not be in the sigma list (unlikely)
             sigma = ml_model['sigma'].get(sensor, 1.0) 
             
             # CALCULATE DYNAMIC 3-SIGMA LIMITS
             # 99.7% of "Normal" data falls within +/- 3 Sigma
             lower_limit = round(expected - (3 * sigma), 2)
             upper_limit = round(expected + (3 * sigma), 2)
+            
 
             # Check if "Out of Bounds" (Hard Fault) vs "Inside Bounds" (Soft Fault)
             is_hard_fault = (actual < lower_limit) or (actual > upper_limit)
@@ -187,6 +205,7 @@ async def analyze_plant_data(data: SensorData):
                 spc_status_msg = "Critical Limit Crossed (Statistical Outlier)"
             else:
                 range_str = f"{lower_limit} - {upper_limit}"
+            anomalous_params[sensor] = round(actual, 2) 
             normal_ranges[sensor] = range_str
             
         # 5. CONSTRUCT STRICT SCHEMA
