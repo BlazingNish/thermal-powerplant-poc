@@ -134,29 +134,34 @@ async def analyze_plant_data(data: SensorData):
         reconstruction_error = np.power(X_scaled_df - reconstructed, 2).values[0]
         
         # Calculate Global Anomaly Score (MSE across all sensors)
-        global_anomaly_score = reconstruction_error.mean()
+        top_3_errors = np.sort(reconstruction_error)[-3:] # Get top 3 sensor errors
+        focused_anomaly_score = np.mean(top_3_errors.mean())
         
         # Thresholds derived from your data generator
         EFF_THRESHOLD = 0.8  # 4x your noise level (0.2)
-        AE_THRESHOLD = 2.5   # Empirical score for "Physics Violation"
+        AE_THRESHOLD = 4.0   # Empirical score for "Physics Violation"
         
         anomaly_detected = False
         priority = "Normal"
         spc_status_msg = "Healthy"
+        watchdog_flag = False
+        localizer_flag = False
         
         # Case 1: High Efficiency Loss (Vaccum/Tube Leaks)
         if eff_loss > EFF_THRESHOLD:
             anomaly_detected = True
+            watchdog_flag = True
             if eff_loss > 1.5:
                 priority = "CRITICAL"
                 spc_status_msg = "Critical Efficiency Loss (Likely Leak)"
             else:
                 priority = "HIGH"
-                status_msg = "EFFICIENCY DRIFT DETECTED"
+                spc_status_msg = "EFFICIENCY DRIFT DETECTED"
                 
         # Case 2: Physics Violation (Feeder Trip/APH Choke)
-        elif global_anomaly_score > AE_THRESHOLD:
+        elif focused_anomaly_score > AE_THRESHOLD:
             anomaly_detected = True
+            localizer_flag = True
             priority = "CRITICAL"
             spc_status_msg = "Physics Constraint Violation (sensor pattern mismatch)"
 
@@ -164,7 +169,7 @@ async def analyze_plant_data(data: SensorData):
         if not anomaly_detected:
             return JSONResponse(content={
                 "status": "Healthy", 
-                "message": f"System Normal. Eff Gap: {eff_loss:.2f}%, Score: {global_anomaly_score:.2f}"
+                "message": f"System Normal. Eff Gap: {eff_loss:.2f}%, Score: {focused_anomaly_score:.2f}"
             }, status_code=201)
         
         suspects_df = pd.DataFrame({
@@ -176,6 +181,7 @@ async def analyze_plant_data(data: SensorData):
         
         #Filter out efficiency itself and sort the error
         ignore = ['plant_efficiency_pct', 'boiler_efficiency_pct']
+        efficiency_AE = suspects_df[suspects_df['Features'] == 'plant_efficiency_pct']
         suspects_df = suspects_df[suspects_df['Features'] != 'plant_efficiency_pct']
         top_suspects = suspects_df[~suspects_df['Features'].isin(ignore)].sort_values('Error_Score', ascending=False).head(5)
         
@@ -210,11 +216,12 @@ async def analyze_plant_data(data: SensorData):
             
         # 5. CONSTRUCT STRICT SCHEMA
         print("Constructing Payload with the following details:")
+        print(localizer_flag, watchdog_flag)
         payload = {
             "timestamp": str(input_dict['timestamp']),
                     
             "impact_metrics": {
-                "expected_efficiency_pct": round(float(expected_eff), 2),
+                "expected_efficiency_pct": round(float(efficiency_AE), 2) if localizer_flag else round(float(expected_eff), 2) if watchdog_flag else None,
                 "actual_efficiency_pct": round(float(actual_eff), 2),
                 "efficiency_loss_pct": round(float(eff_loss), 2),
                 "gen_mw": round(float(input_dict['gen_mw']), 2)
