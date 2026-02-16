@@ -181,7 +181,7 @@ async def analyze_plant_data(data: SensorData):
         
         #Filter out efficiency itself and sort the error
         ignore = ['plant_efficiency_pct', 'boiler_efficiency_pct']
-        efficiency_AE = suspects_df[suspects_df['Features'] == 'plant_efficiency_pct']
+        efficiency_AE = suspects_df[suspects_df['Features'] == 'plant_efficiency_pct'].values[0][1]
         suspects_df = suspects_df[suspects_df['Features'] != 'plant_efficiency_pct']
         top_suspects = suspects_df[~suspects_df['Features'].isin(ignore)].sort_values('Error_Score', ascending=False).head(5)
         
